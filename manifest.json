@@ -1,0 +1,15 @@
+{
+  "name": "CosmoStock",
+  "short_name": "CosmoStock",
+  "description": "Portfolio Command Center — 台股持倉追蹤系統",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#060d14",
+  "theme_color": "#060d14",
+  "orientation": "any",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
