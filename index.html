@@ -366,7 +366,7 @@ textarea{resize:vertical;min-height:60px}
   </div>
 
   <div class="hud-card" style="margin-bottom:8px">
-    <div class="card-label">各股損益（條下標均價）· 目標價標示</div>
+    <div class="card-label">各股損益（條下標均價）· ◯ 到目標價損益</div>
     <div class="cw"><canvas id="chart-bar" role="img" aria-label="各股損益與目標價距離"></canvas></div>
   </div>
 
@@ -1052,9 +1052,14 @@ function renderDash(){
   const pnlData=symKeys.map(s=>syms[s].hasPnl?+syms[s].pnl.toFixed(0):0);
   const pnlColors=pnlData.map(v=>v>=0?'rgba(255,61,90,.8)':'rgba(0,229,160,.8)');
 
-  // 目標價：以實際數值的圓點標示在 X 軸（零）線上
-  const targetVals=symKeys.map(s=>(syms[s].target||null));
-  const hasTarget=targetVals.some(v=>v!==null);
+  // 目標損益：到目標價時的損益金額 = (目標價 − 均攤成本) × 股數，畫在同一條金額軸上
+  const targetPnls=symKeys.map(s=>{
+    const o=syms[s];
+    if(!o.target||o.shares<=0) return null;
+    return +(o.target*o.shares - o.costAmt).toFixed(0);
+  });
+  const targetUnit=symKeys.map(s=>syms[s].target||null);
+  const hasTarget=targetPnls.some(v=>v!==null);
 
   if(charts.bar) charts.bar.destroy();
 
@@ -1063,28 +1068,33 @@ function renderDash(){
   const chartHeight=Math.max(220, symCount*22);
   document.getElementById('chart-bar').parentElement.style.height=chartHeight+'px';
 
-  // Y 軸範圍：確保正負數都有足夠空間
-  const pnlMin=Math.min(...pnlData,0);
-  const pnlMax=Math.max(...pnlData,0);
+  // Y 軸範圍：同時涵蓋損益長條與目標損益圓點
+  const yVals=pnlData.concat(targetPnls.filter(v=>v!==null),[0]);
+  const pnlMin=Math.min(...yVals);
+  const pnlMax=Math.max(...yVals);
   const pnlPad=Math.max(Math.abs(pnlMin),Math.abs(pnlMax))*0.18||1000;
 
-  // 自繪外掛：在零線上畫目標價圓點 + 數值
+  // 自繪外掛：在「目標損益」高度畫圓點 + 金額（並附目標單價）
   const targetDotPlugin={
     id:'targetDots',
     afterDatasetsDraw(chart){
       if(!hasTarget) return;
       const{ctx,scales:{x,y}}=chart;
-      const y0=y.getPixelForValue(0);
       ctx.save();
       ctx.font='600 10px monospace';ctx.textAlign='center';
-      for(let i=0;i<targetVals.length;i++){
-        const tv=targetVals[i]; if(tv===null||tv===undefined) continue;
+      for(let i=0;i<targetPnls.length;i++){
+        const tp=targetPnls[i]; if(tp===null||tp===undefined) continue;
         const px=x.getPixelForValue(i);
-        ctx.beginPath();ctx.arc(px,y0,4.5,0,Math.PI*2);
+        const py=y.getPixelForValue(tp);
+        ctx.beginPath();ctx.arc(px,py,4.5,0,Math.PI*2);
         ctx.fillStyle='#00e5ff';ctx.fill();
         ctx.strokeStyle='#060d14';ctx.lineWidth=1.5;ctx.stroke();
+        const lbl=(Math.abs(tp)>=10000?(tp/10000).toFixed(1)+'萬':tp.toLocaleString());
         ctx.fillStyle='#00e5ff';
-        ctx.fillText(String(tv),px,y0-8);
+        ctx.fillText((tp>=0?'+':'')+lbl,px,py-8);
+        ctx.fillStyle='#6a8fa8';ctx.font='9px monospace';
+        ctx.fillText('@'+targetUnit[i],px,py+15);
+        ctx.font='600 10px monospace';
       }
       ctx.restore();
     }
@@ -1642,7 +1652,7 @@ function openDetail(sym){
 // SNAPSHOTS
 // ══════════════════════════════════════════════
 function takeSnapshot(silent){
-  const dateStr=today();
+  const dateStr=dataTradeDate()||today();   // 以資料的實際交易日標示，而非按下同步的日曆日
   const existing=snapshots.findIndex(s=>s.date===dateStr);
   const{totalCost,totalMkt,totalPnl,weightedRet}=portfolioTotals();
   const syms={};
@@ -1820,8 +1830,7 @@ function deleteAccount(){
 // 匯出 Obsidian 日報（ARKIV frontmatter + 持倉/已實現）
 function exportObsidian(){
   const accName=accounts.find(a=>a.id===currentAccount)?.name||'';
-  const dateStr=today();
-  const snap=snapshots.find(s=>s.date===dateStr)||snapshots[0]||null;
+  const dateStr=dataTradeDate()||today();
   const{totalCost,totalMkt,totalPnl,weightedRet}=portfolioTotals();
   const realized=realizedTotal();
   const fm=[
@@ -1971,6 +1980,21 @@ function cleanName(name){
     .replace(/成交資訊/g,'').replace(/\s+/g,'').trim();
 }
 function today(){ return new Date().toISOString().split('T')[0]; }
+// 民國/西元日期字串 → ISO（"115/06/24" → "2026-06-24"）
+function rocToISO(s){
+  if(!s||typeof s!=='string') return null;
+  s=s.trim();
+  let m=s.match(/^(\d{2,3})\/(\d{1,2})\/(\d{1,2})$/);      // 民國
+  if(m){ const y=parseInt(m[1],10)+1911; return `${y}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`; }
+  m=s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);        // 西元
+  if(m){ return `${m[1]}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`; }
+  return null;
+}
+// 從目前價格資料推得「最近交易日」(ISO)；無則 null（回退 today()）
+function dataTradeDate(){
+  const ds=Object.values(prices).map(p=>rocToISO(p&&p.date)).filter(Boolean).sort();
+  return ds.length?ds[ds.length-1]:null;
+}
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
 function fmtN(n,signed){
   if(n===null||n===undefined) return '—';
