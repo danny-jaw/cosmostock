@@ -1,4 +1,4 @@
-const CACHE = 'cosmostock-v4';
+const CACHE = 'cosmostock-v5';
 const ASSETS = [
   '/',
   '/index.html',
